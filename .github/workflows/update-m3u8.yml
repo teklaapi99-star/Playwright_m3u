@@ -1,69 +1,80 @@
-name: Update m3u8 links & playlist every hour
+name: Hourly Update - m3u8 links & playlist
 
 on:
   schedule:
-    # Every hour → "0 * * * *" means at minute 0 of every hour
-    - cron: '0 * * * *'
+    # Runs every hour at minute 30 (UTC) → roughly every hour on the hour in IST
+    - cron: '30 * * * *'
 
-  # Also allow manual trigger from GitHub UI (very useful for testing)
+  # Allows you to manually trigger it from the Actions tab
   workflow_dispatch:
 
+permissions:
+  contents: write    # Required so the workflow can git push / commit
+
 jobs:
-  update:
+  update-playlist:
     runs-on: ubuntu-latest
 
     steps:
-      # ── Checkout your repository ───────────────────────────────
+      # ───────────────────────────────────────────────────────────────
+      # 1. Get your repository code
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # important if you want to commit later
+          fetch-depth: 0   # Important for git commit to work properly
 
-      # ── Set up Python ───────────────────────────────────────────
+      # ───────────────────────────────────────────────────────────────
+      # 2. Set up Python
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      # ── Install dependencies ────────────────────────────────────
-      - name: Install Python dependencies
+      # ───────────────────────────────────────────────────────────────
+      # 3. Install Python dependencies
+      - name: Install requirements
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
 
-      # ── Install Playwright browsers ─────────────────────────────
+      # ───────────────────────────────────────────────────────────────
+      # 4. Install Playwright + required system dependencies + Chromium
       - name: Install Playwright browsers
-        run: python -m playwright install --with-deps chromium
-
-      # ── Run your script ─────────────────────────────────────────
-      - name: Run m3u8 fetch script
-        run: python main.py
-
-      # ── Commit & push updated files (if changed) ────────────────
-      - name: Commit updated Excel & m3u8 playlist
         run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
+          python -m playwright install-deps
+          python -m playwright install chromium --with-deps
 
-          git add ${{ env.OUTPUT_EXCEL }} ${{ env.OUTPUT_M3U }} || true
-          git diff --staged --quiet || git commit -m "Auto-update: refreshed m3u8 links and playlist [$(date '+%Y-%m-%d %H:%M')]" || echo "No changes to commit"
-          git push || echo "Nothing to push"
-      - name: Auto commit changes
+      # ───────────────────────────────────────────────────────────────
+      # 5. Run your main script
+      - name: Run m3u8 fetch & playlist generator
+        run: python main.py
+        env:
+          # Optional: you can pass variables if your script supports them
+          INPUT_EXCEL: Cartoonxlsx.xlsx
+          OUTPUT_EXCEL: updated_videos_with_links.xlsx
+          OUTPUT_M3U: all_channels_playlist.m3u8
+
+      # ───────────────────────────────────────────────────────────────
+      # 6. Commit and push output files (even if unchanged - good for first run)
+      - name: Commit updated files (Excel + m3u8)
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "chore: auto-update m3u8 links & playlist"
-          file_pattern: "*.xlsx *.m3u8"
+          commit_message: "chore(auto): updated m3u8 links & playlist ${{ github.run_number }}"
+          file_pattern: |
+            *.xlsx
+            *.m3u8
           skip_dirty_check: false
           skip_fetch: false
           skip_commit: false
-        env:
-          INPUT_EXCEL:  Cartoonxlsx.xlsx
-          OUTPUT_EXCEL: updated_videos_with_links.xlsx
-          OUTPUT_M3U:   all_channels_playlist.m3u8
+          commit_user_name: github-actions[bot]
+          commit_user_email: github-actions[bot]@users.noreply.github.com
+          commit_author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
 
-      # Optional: if you want to create a pull request instead of direct push:
-      # - uses: peter-evans/create-pull-request@v6
-      #   with:
-      #     commit-message: Auto-update m3u8 links
-      #     title: "chore: auto-update m3u8 playlist"
-      #     branch: auto-update-m3u8
+      # ───────────────────────────────────────────────────────────────
+      # 7. (Optional) Show what files exist after the run - for debugging
+      - name: List generated files (debug)
+        run: |
+          ls -la | grep -E '\.xlsx|\.m3u8' || echo "No xlsx or m3u8 files found"
