@@ -10,12 +10,12 @@ from urllib.parse import urlparse
 import os
 
 # ────────────────────────────────────────────────
-INPUT_EXCEL     = os.getenv("INPUT_EXCEL", "Cartoonxlsx.xlsx")           # Your input file
+INPUT_EXCEL     = os.getenv("INPUT_EXCEL", "Cartoonxlsx.xlsx")  # Updated to match your file name
 OUTPUT_EXCEL    = os.getenv("OUTPUT_EXCEL", "updated_videos_with_links.xlsx")
-OUTPUT_M3U      = os.getenv("OUTPUT_M3U", "all_channels_playlist.m3u")
-WAIT_AFTER_LOAD = 12                            # seconds — increase if needed
+OUTPUT_M3U      = os.getenv("OUTPUT_M3U", "all_channels_playlist.m3u8")
+WAIT_AFTER_LOAD = 15                            # Increased slightly for better capture
 HEADLESS        = True                          # Set False to watch/debug locally (not in CI)
-MAX_CONCURRENT  = 3                             # 2–5 recommended
+MAX_CONCURRENT  = 2                             # Lowered to avoid rate limits
 # ────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
@@ -26,6 +26,7 @@ def find_m3u8_urls(page, target_url):
     def on_request(request):
         url_lower = request.url.lower()
         if any(x in url_lower for x in [".m3u8", "master.m3u", "playlist.m3u", "chunklist"]):
+            logging.info(f"Captured m3u8 request: {request.url}")
             found_urls.add(request.url)
 
     page.on("request", on_request)
@@ -35,31 +36,44 @@ def find_m3u8_urls(page, target_url):
         page.goto(target_url, wait_until="networkidle", timeout=60000)
         time.sleep(WAIT_AFTER_LOAD)
 
-        # Optional: try to start playback (adjust selector for your sites)
-        # try:
-        #     page.click("button:has-text('Play'), [aria-label*='play' i]", timeout=10000)
-        #     time.sleep(5)
-        # except:
-        #     pass
+        # Try to start playback if needed (expanded selectors for common video players)
+        try:
+            page.click("button:has-text('Play'), [aria-label*='play' i], .play-button, video, div.video-player", timeout=10000)
+            logging.info("Clicked potential play element")
+            time.sleep(5)  # Extra wait after click
+        except Exception as e:
+            logging.warning(f"No play element found or click failed: {str(e)}")
 
     except Exception as e:
-        logging.error(f"Error on {target_url}: {str(e)}")
+        logging.error(f"Page load/error on {target_url}: {str(e)}")
+
+    if not found_urls:
+        logging.warning(f"No m3u8 URLs captured for {target_url} — check if video plays, or site blocks headless browsers.")
 
     return list(found_urls)
 
 
 def main():
-    if not Path(INPUT_EXCEL).is_file():
-        logging.error(f"Input file not found: {INPUT_EXCEL}")
+    input_path = Path(INPUT_EXCEL)
+    if not input_path.is_file():
+        logging.error(f"Input file not found: {INPUT_EXCEL} — creating dummy outputs for debug.")
+        # Create dummy Excel
+        pd.DataFrame({"error": ["No input Excel found — upload Cartoonxlsx.xlsx or check name."]}).to_excel(OUTPUT_EXCEL, index=False)
+        # Create dummy m3u8
+        with open(OUTPUT_M3U, 'w', encoding='utf-8') as f:
+            f.write("#EXTM3U\n# ERROR: No input Excel found — fix file name or upload.\n")
         return
 
     # Read Excel
     df = pd.read_excel(INPUT_EXCEL, dtype=str)
-    logging.info(f"Loaded {len(df)} entries from {INPUT_EXCEL}")
+    logging.info(f"Loaded {len(df)} entries from {INPUT_EXCEL}. Sample URLs: {df['Page URL'].head(3).to_list()}")
 
     # Make sure required columns exist
     if 'Page URL' not in df.columns:
-        logging.error("Excel must contain 'Page URL' column!")
+        logging.error("Excel must contain 'Page URL' column! Creating dummy outputs.")
+        df.to_excel(OUTPUT_EXCEL, index=False)  # Save anyway
+        with open(OUTPUT_M3U, 'w', encoding='utf-8') as f:
+            f.write("#EXTM3U\n# ERROR: No 'Page URL' column in Excel.\n")
         return
 
     # Prepare result column if missing
@@ -102,11 +116,11 @@ def main():
                     pass
             context.close()
 
-            time.sleep(1)  # small delay between batches
+            time.sleep(2 + i % 3)  # Variable delay to avoid detection
 
         browser.close()
 
-    # ── Save updated Excel ───────────────────────────────────────
+    # ── Save updated Excel (always) ───────────────────────────────────────
     df.to_excel(OUTPUT_EXCEL, index=False)
     logging.info(f"Updated Excel saved → {OUTPUT_EXCEL} ({found_count} new links)")
 
@@ -117,12 +131,12 @@ def main():
         f.write("# Generated on " + time.strftime("%Y-%m-%d %H:%M:%S") + "\n\n")
 
         if len(valid) == 0:
-            f.write("# No valid m3u8 links found yet — check logs for errors or add more URLs to input Excel.\n\n")
+            f.write("# No valid m3u8 links found — check Actions logs for warnings/errors (e.g., page load issues, no video requests).\n\n")
         else:
             for _, row in valid.iterrows():
                 name = f"{row.get('Video Name', 'Unknown')}"
                 if 'Season' in row and 'Episode' in row:
-                    name = f"S{row['Season']}E{row['Episode']} - {name}"
+                    name = f"S{row['Season']:02}E{row['Episode']:02} - {name}"
 
                 f.write(f"#EXTINF:-1 tvg-name=\"{name}\" tvg-language=\"TAM\",{name}\n")
                 f.write(f"{row['m3u8_url']}\n\n")
@@ -131,9 +145,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    # Uncomment to run every hour:
-    # while True:
-    #     main()
-    #     print("\nWaiting 1 hour for next refresh...\n")
-    #     time.sleep(3600)
