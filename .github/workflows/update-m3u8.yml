@@ -49,8 +49,8 @@ jobs:
         with:
           commit_message: "chore(auto): updated m3u8 links & playlist ${{ github.run_number }}"
           file_pattern: |
-            *.xlsx
             *.m3u8
+            *.xlsx            
           skip_dirty_check: false
           skip_fetch: false
           skip_commit: false
