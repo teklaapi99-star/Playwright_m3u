@@ -42,7 +42,7 @@ jobs:
         env:
           INPUT_EXCEL: Cartoonxlsx.xlsx
           OUTPUT_EXCEL: updated_videos_with_links.xlsx
-          OUTPUT_M3U: all_channels_playlist.m3u
+          OUTPUT_M3U: all_channels_playlist.m3u8
 
       - name: Commit updated files (Excel + m3u8)
         uses: stefanzweifel/git-auto-commit-action@v5
