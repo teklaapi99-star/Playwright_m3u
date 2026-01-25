@@ -20,6 +20,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          
+      - name: Set timezone to IST
+        run: sudo timedatectl set-timezone Asia/Kolkata    
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
