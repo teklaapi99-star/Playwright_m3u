@@ -1,5 +1,5 @@
 # pip install playwright pandas openpyxl pytz
-# playwright install   # run once
+# playwright install   # run once (add --with-deps on Linux/GitHub)
 
 import pandas as pd
 from playwright.sync_api import sync_playwright
@@ -14,7 +14,7 @@ import pytz
 INPUT_EXCEL     = os.getenv("INPUT_EXCEL", "Cartoonxlsx.xlsx")
 OUTPUT_EXCEL    = os.getenv("OUTPUT_EXCEL", "updated_videos_with_links.xlsx")
 OUTPUT_M3U      = os.getenv("OUTPUT_M3U", "all_channels_playlist.m3u8")
-WAIT_AFTER_LOAD = 15
+WAIT_AFTER_LOAD = 20  # Increased for better request capture
 HEADLESS        = True
 MAX_CONCURRENT  = 2
 # ────────────────────────────────────────────────
@@ -53,6 +53,21 @@ def find_m3u8_urls(page, target_url):
         page.goto(target_url, wait_until="networkidle", timeout=60000)
         time.sleep(WAIT_AFTER_LOAD)
 
+        # Force video play via JS (more reliable in headless)
+        try:
+            page.evaluate("""
+                let video = document.querySelector('video');
+                if (video) {
+                    video.play();
+                    console.log('Video play triggered');
+                }
+            """)
+            logging.info("Triggered video play via JS")
+            time.sleep(10)  # Extra wait for streaming requests
+        except Exception as e:
+            logging.warning(f"Video play trigger failed: {str(e)}")
+
+        # Fallback click if needed
         try:
             page.click(
                 "button:has-text('Play'), [aria-label*='play' i], .play-button, video, div.video-player",
@@ -100,17 +115,45 @@ def main():
 
     found_count = 0
 
+    # Proxy setup (for GitHub Actions to simulate Indian IP)
+    proxy = None
+    proxy_server = os.getenv("PROXY_SERVER")  # e.g., 'http://123.45.67.89:8080'
+    if proxy_server:
+        proxy = {'server': proxy_server}
+        proxy_user = os.getenv("PROXY_USER")
+        proxy_pass = os.getenv("PROXY_PASS")
+        if proxy_user and proxy_pass:
+            proxy['username'] = proxy_user
+            proxy['password'] = proxy_pass
+        logging.info(f"Using proxy: {proxy_server}")
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=HEADLESS)
 
         for i in range(0, len(df), MAX_CONCURRENT):
             batch = df.iloc[i:i + MAX_CONCURRENT]
 
-            context = browser.new_context(
-                viewport={'width': 1280, 'height': 720},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0",
-                ignore_https_errors=True,
-            )
+            context_args = {
+                'viewport': {'width': 1280, 'height': 720},
+                'user_agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0",
+                'ignore_https_errors': True,
+                'locale': 'en-IN',  # Indian English
+                'timezone_id': 'Asia/Kolkata',  # IST timezone for JS
+                'geolocation': {'latitude': 13.0827, 'longitude': 80.2707},  # Chennai coords
+                'permissions': ['geolocation'],  # Allow geolocation
+                'bypass_csp': True,  # Help with content security
+            }
+            if proxy:
+                context_args['proxy'] = proxy
+
+            context = browser.new_context(**context_args)
+
+            # Anti-detection: Hide webdriver trace
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+                window.chrome = { runtime: {} };
+                window.navigator.permissions.query = () => Promise.resolve({ state: "granted" });
+            """)
 
             pages = [context.new_page() for _ in batch['Page URL']]
 
