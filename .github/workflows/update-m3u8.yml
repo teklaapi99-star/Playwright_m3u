@@ -12,6 +12,8 @@ permissions:
 jobs:
   update-playlist:
     runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Kolkata
 
     steps:
       - name: Checkout repository
